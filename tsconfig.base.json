@@ -15,7 +15,9 @@
     "skipDefaultLibCheck": true,
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./web/*"]
+      "@/*": ["./web/*"],
+      "@scoogi-battle/anchor": ["anchor/src/index.ts"],
+      "@scoogi-battle/utils": ["utils/src/index.ts"]
     }
   },
   "exclude": ["node_modules", "tmp"]

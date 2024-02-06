@@ -42,3 +42,6 @@ Thumbs.db
 
 # Next.js
 .next
+
+# Test Ledger
+test-ledger
