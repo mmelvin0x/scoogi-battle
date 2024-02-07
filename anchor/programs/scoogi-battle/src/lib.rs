@@ -10,7 +10,7 @@ pub use errors::*;
 pub use instructions::*;
 pub use state::*;
 
-declare_id!("7ftEA2QYxQsfBFZYiyXfA43iLvLoLmdJ6kwkmCUkGxVY");
+declare_id!("GM9mV2Km6iwaQsVjs5x4wb4CL2XBemS3cgZ28sCydiBR");
 
 #[program]
 pub mod scoogi_battle {

@@ -2,13 +2,13 @@ use anchor_lang::prelude::*;
 use anchor_spl::{
     associated_token::AssociatedToken,
     token_2022 as token,
-    token_interface::{Mint, TokenAccount, TokenInterface, TransferChecked},
+    token_interface::{CloseAccount, Mint, TokenAccount, TokenInterface, TransferChecked},
 };
 
 use crate::{constants, Admin, Battle, BattleStatus, ScoogiBattleError};
 
 #[derive(Accounts)]
-#[instruction(battle_id: u64)]
+#[instruction(battle_result: u8, battle_id: u64)]
 pub struct RecordBattleResult<'info> {
     #[account(mut, signer)]
     winner: Signer<'info>,
@@ -19,21 +19,33 @@ pub struct RecordBattleResult<'info> {
     /// CHECK: passed in here for use in the seeds
     pub player_two: AccountInfo<'info>,
 
+    /// CHECK: passed in here for use in the seeds
+    pub admin: AccountInfo<'info>,
+
     #[account(seeds = [constants::ADMIN_SEED], bump, has_one = mint)]
     pub admin_account: Account<'info, Admin>,
 
     #[account(
+        init_if_needed,
+        payer = winner,
+        associated_token::mint = mint,
+        associated_token::authority = admin,
+        associated_token::token_program = token_program
+    )]
+    pub admin_token_account: Box<InterfaceAccount<'info, TokenAccount>>,
+
+    #[account(
         mut,
-        seeds = [constants::BATTLE_SEED, player_one.key().as_ref(), player_two.key().as_ref(), &battle_id.to_le_bytes()[..]],
+        close = player_one,
+        seeds = [constants::BATTLE_SEED, player_one.key().as_ref()],
         bump,
         has_one = player_one,
-        has_one = player_two
     )]
     pub battle_account: Account<'info, Battle>,
 
     #[account(
         mut,
-        seeds = [constants::TOKEN_ACCOUNT_SEED, player_one.key().as_ref(), &battle_id.to_le_bytes()[..]],
+        seeds = [constants::TOKEN_ACCOUNT_SEED, player_one.key().as_ref()],
         bump,
         token::mint = mint,
         token::authority = battle_token_account,
@@ -67,41 +79,105 @@ pub fn record_battle_result_ix(
         return Err(ScoogiBattleError::InvalidBattleId.into());
     }
 
+    let player_one_key = ctx.accounts.player_one.key();
+    let burn_amount = ctx
+        .accounts
+        .admin_account
+        .burn_fee_bps
+        .checked_mul(
+            ctx.accounts
+                .admin_account
+                .battle_price
+                .checked_mul(2)
+                .unwrap(),
+        )
+        .unwrap()
+        .checked_div(10_000)
+        .unwrap();
+    msg!("DEBUG: Burn amount: {}", burn_amount);
+
+    let winner_amount = ctx
+        .accounts
+        .battle_token_account
+        .amount
+        .checked_sub(burn_amount)
+        .unwrap();
+
+    msg!("DEBUG: Winner amount: {}", winner_amount);
+    msg!(
+        "DEBUG: PDA Amount: {}",
+        ctx.accounts.battle_token_account.amount
+    );
+
+    let bump = ctx.bumps.battle_token_account;
+    let signer_seeds: &[&[&[u8]]] = &[&[
+        constants::TOKEN_ACCOUNT_SEED,
+        player_one_key.as_ref(),
+        &[bump],
+    ]];
+
     match ctx.accounts.battle_account.battle_status {
         BattleStatus::InProgress => {
-            ctx.accounts.battle_account.player_two = ctx.accounts.player_two.key();
+            msg!("DEBUG: Battle is in progress");
             ctx.accounts.battle_account.battle_status = BattleStatus::Completed;
 
-            let bump = ctx.bumps.battle_token_account;
-            let signer_seeds: &[&[&[u8]]] = &[&[
-                constants::TOKEN_ACCOUNT_SEED,
-                &battle_id.to_le_bytes(),
-                &[bump],
-            ]];
+            ctx.accounts.battle_account.winner = match battle_result {
+                0 => {
+                    if ctx.accounts.winner.key() != ctx.accounts.battle_account.player_one {
+                        return Err(ScoogiBattleError::Unauthorized.into());
+                    }
+
+                    msg!("DEBUG: Player one won");
+                    ctx.accounts.battle_account.player_one
+                }
+                1 => {
+                    if ctx.accounts.winner.key() != ctx.accounts.battle_account.player_two {
+                        return Err(ScoogiBattleError::Unauthorized.into());
+                    }
+
+                    msg!("DEBUG: Player two won");
+                    ctx.accounts.battle_account.player_two
+                }
+                _ => return Err(ScoogiBattleError::InvalidBattleResult.into()),
+            };
 
             let cpi_program = ctx.accounts.token_program.to_account_info();
             let cpi_accounts = TransferChecked {
                 from: ctx.accounts.battle_token_account.to_account_info(),
                 mint: ctx.accounts.mint.to_account_info(),
                 to: ctx.accounts.winner_token_account.to_account_info(),
-                authority: ctx.accounts.player_one.to_account_info(),
+                authority: ctx.accounts.battle_token_account.to_account_info(),
             };
             let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
 
-            token::transfer_checked(
-                cpi_ctx,
-                ctx.accounts.admin_account.battle_price,
-                ctx.accounts.mint.decimals,
-            )?;
+            token::transfer_checked(cpi_ctx, winner_amount, ctx.accounts.mint.decimals)?;
         }
         _ => return Err(ScoogiBattleError::InvalidBattleStatus.into()),
     }
 
-    ctx.accounts.battle_account.winner = match battle_result {
-        0 => ctx.accounts.battle_account.player_one,
-        1 => ctx.accounts.battle_account.player_two,
-        _ => return Err(ScoogiBattleError::InvalidBattleResult.into()),
+    // Send to admin account so tokens can be burned
+    let cpi_program = ctx.accounts.token_program.to_account_info();
+    let cpi_accounts = TransferChecked {
+        from: ctx.accounts.battle_token_account.to_account_info(),
+        mint: ctx.accounts.mint.to_account_info(),
+        to: ctx.accounts.admin_token_account.to_account_info(),
+        authority: ctx.accounts.battle_token_account.to_account_info(),
     };
+    let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
+
+    token::transfer_checked(cpi_ctx, burn_amount, ctx.accounts.mint.decimals)?;
+
+    // Close the battle token account
+    let cpi_program = ctx.accounts.token_program.to_account_info();
+    let cpi_accounts = CloseAccount {
+        account: ctx.accounts.battle_token_account.to_account_info(),
+        destination: ctx.accounts.player_one.to_account_info(),
+        authority: ctx.accounts.battle_token_account.to_account_info(),
+    };
+    let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
+
+    msg!("DEBUG: Closing account");
+    token::close_account(cpi_ctx)?;
 
     Ok(())
 }

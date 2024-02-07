@@ -18,6 +18,6 @@ pub struct Battle {
 
 impl Battle {
     pub fn size() -> usize {
-        8 + 8 + 32 + 32 + 32 + 32 + 1 + 1
+        8 + 8 + 32 + 32 + 32 + 1
     }
 }

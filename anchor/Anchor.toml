@@ -5,17 +5,25 @@ seeds = false
 skip-lint = false
 
 [programs.localnet]
-scoogi_battle = "7ftEA2QYxQsfBFZYiyXfA43iLvLoLmdJ6kwkmCUkGxVY"
+scoogi_battle = "GM9mV2Km6iwaQsVjs5x4wb4CL2XBemS3cgZ28sCydiBR"
 
 [registry]
 url = "https://api.apr.dev"
 
 [provider]
 cluster = "Localnet"
-wallet = "~/.config/solana/id.json"
+wallet = "/Users/mmelvin0x/.config/solana/id.json"
 
 [scripts]
+mint-dev-tokens = "yarn ts-node ./anchor/src/utils/mint-dev-tokens.ts"
 test = "../node_modules/.bin/nx run anchor:jest"
+
+[test]
+startup_wait = 5000
+shutdown_wait = 2000
+upgradeable = false
 
 [test.validator]
 bind_address = "127.0.0.1"
+ledger = ".anchor/test-ledger"
+rpc_port = 8899

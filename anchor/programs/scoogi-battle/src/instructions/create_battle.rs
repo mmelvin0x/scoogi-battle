@@ -20,7 +20,7 @@ pub struct CreateBattle<'info> {
         init,
         payer = player_one,
         space = Battle::size(),
-        seeds = [constants::BATTLE_SEED, player_one.key().as_ref(), &battle_id.to_le_bytes()[..]],
+        seeds = [constants::BATTLE_SEED, player_one.key().as_ref()],
         bump
     )]
     pub battle_account: Account<'info, Battle>,
@@ -35,7 +35,7 @@ pub struct CreateBattle<'info> {
 
     #[account(
         init,
-        seeds = [constants::TOKEN_ACCOUNT_SEED, player_one.key().as_ref(), &battle_id.to_le_bytes()[..]],
+        seeds = [constants::TOKEN_ACCOUNT_SEED, player_one.key().as_ref()],
         bump,
         payer = player_one,
         token::mint = mint,

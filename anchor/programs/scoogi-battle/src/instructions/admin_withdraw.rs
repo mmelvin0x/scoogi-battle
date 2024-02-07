@@ -25,7 +25,7 @@ pub struct AdminWithdraw<'info> {
     #[account(
         mut,
         close = admin,
-        seeds = [constants::BATTLE_SEED, player_one.key().as_ref(), player_two.key().as_ref(), &battle_id.to_le_bytes()[..]],
+        seeds = [constants::BATTLE_SEED, player_one.key().as_ref(), player_two.key().as_ref()],
         bump,
         has_one = player_one,
         has_one = player_two
@@ -34,7 +34,7 @@ pub struct AdminWithdraw<'info> {
 
     #[account(
         mut,
-        seeds = [constants::TOKEN_ACCOUNT_SEED, player_one.key().as_ref(), &battle_id.to_le_bytes()[..]],
+        seeds = [constants::TOKEN_ACCOUNT_SEED, player_one.key().as_ref()],
         bump,
         token::mint = mint,
         token::authority = battle_token_account,

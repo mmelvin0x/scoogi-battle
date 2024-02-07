@@ -4,11 +4,10 @@ import {
   ASSOCIATED_TOKEN_PROGRAM_ID,
   Account,
   TOKEN_PROGRAM_ID,
-  createInitializeMintInstruction,
   createMint,
-  getMintLen,
+  getAccount,
   getOrCreateAssociatedTokenAccount,
-  mintToChecked,
+  mintTo,
 } from '@solana/spl-token';
 import {
   Connection,
@@ -16,17 +15,10 @@ import {
   LAMPORTS_PER_SOL,
   PublicKey,
   SystemProgram,
-  Transaction,
 } from '@solana/web3.js';
 
 import { Program } from '@coral-xyz/anchor';
 import { ScoogiBattle } from '../target/types/scoogi_battle';
-
-enum BattleStatus {
-  Pending,
-  InProgress,
-  Completed,
-}
 
 async function airdrop(
   connection: Connection,
@@ -53,8 +45,11 @@ describe('🐸 Scoogi Battle 🤺', () => {
   let mint: PublicKey;
   let playerOneTokenAccount: Account;
   let playerTwoTokenAccount: Account;
+  let adminTokenAccount: Account;
   let battleAccountAddress: PublicKey;
   let battleTokenAccountAddress: PublicKey;
+  const burnFeeBps = new anchor.BN(100);
+  const battlePrice = new anchor.BN(10_000);
 
   const startBattleId = new anchor.BN(Math.ceil(new Date().getTime() / 1000));
   const admin = anchor.Wallet.local();
@@ -79,84 +74,60 @@ describe('🐸 Scoogi Battle 🤺', () => {
       admin.payer,
       admin.publicKey,
       admin.publicKey,
-      9,
-      undefined,
-      undefined,
-      TOKEN_PROGRAM_ID
+      9
     );
 
     playerOneTokenAccount = await getOrCreateAssociatedTokenAccount(
       connection,
       admin.payer,
       mint,
-      playerOne.publicKey,
-      false,
-      undefined,
-      undefined,
-      TOKEN_PROGRAM_ID,
-      ASSOCIATED_TOKEN_PROGRAM_ID
+      playerOne.publicKey
     );
 
     playerTwoTokenAccount = await getOrCreateAssociatedTokenAccount(
       connection,
       admin.payer,
       mint,
-      playerTwo.publicKey,
-      false,
-      undefined,
-      undefined,
-      TOKEN_PROGRAM_ID,
-      ASSOCIATED_TOKEN_PROGRAM_ID
+      playerTwo.publicKey
     );
 
-    await mintToChecked(
+    adminTokenAccount = await getOrCreateAssociatedTokenAccount(
+      connection,
+      admin.payer,
+      mint,
+      admin.publicKey
+    );
+
+    await mintTo(
       connection,
       admin.payer,
       mint,
       playerOneTokenAccount.address,
       admin.publicKey,
-      10_000,
-      9,
-      [],
-      undefined,
-      TOKEN_PROGRAM_ID
+      100_000 * LAMPORTS_PER_SOL
     );
 
-    await mintToChecked(
+    await mintTo(
       connection,
       admin.payer,
       mint,
       playerTwoTokenAccount.address,
       admin.publicKey,
-      10_000,
-      9,
-      [],
-      undefined,
-      TOKEN_PROGRAM_ID
+      100_000 * LAMPORTS_PER_SOL
     );
 
     [battleTokenAccountAddress] = PublicKey.findProgramAddressSync(
-      [
-        TOKEN_ACCOUNT_SEED,
-        playerOne.publicKey.toBuffer(),
-        startBattleId.toArrayLike(Buffer, 'le', 8),
-      ],
+      [TOKEN_ACCOUNT_SEED, playerOne.publicKey.toBuffer()],
       program.programId
     );
 
     [battleAccountAddress] = PublicKey.findProgramAddressSync(
-      [
-        BATTLE_SEED,
-        playerOne.publicKey.toBuffer(),
-        startBattleId.toArrayLike(Buffer, 'le', 8),
-      ],
+      [BATTLE_SEED, playerOne.publicKey.toBuffer()],
       program.programId
     );
   });
 
   it('Initialization', async () => {
-    const burnFeeBps = new anchor.BN(100);
-    const battlePrice = new anchor.BN(10_000);
     const tx = await program.methods
       .initialize(burnFeeBps, battlePrice)
       .accounts({
@@ -180,36 +151,163 @@ describe('🐸 Scoogi Battle 🤺', () => {
     );
   });
 
-  it('Creates a battle', async () => {
-    const tx = await program.methods
-      .createBattle(startBattleId)
-      .accounts({
-        playerOne: playerOne.publicKey,
-        adminAccount,
-        battleAccount: battleAccountAddress,
-        playerOneTokenAccount: playerOneTokenAccount.address,
-        battleTokenAccount: battleTokenAccountAddress,
-        mint,
-        systemProgram: SystemProgram.programId,
-        associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
-        tokenProgram: TOKEN_PROGRAM_ID,
-      })
-      .signers([playerOne])
-      .rpc();
+  describe('Full battle', () => {
+    it('Creates a battle', async () => {
+      const beforeTokenBalance = new anchor.BN(
+        (await getAccount(connection, playerOneTokenAccount.address)).amount
+      );
 
-    await connection.confirmTransaction(tx, 'confirmed');
+      const tx = await program.methods
+        .createBattle(startBattleId)
+        .accounts({
+          playerOne: playerOne.publicKey,
+          adminAccount,
+          battleAccount: battleAccountAddress,
+          playerOneTokenAccount: playerOneTokenAccount.address,
+          battleTokenAccount: battleTokenAccountAddress,
+          mint,
+          systemProgram: SystemProgram.programId,
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .signers([playerOne])
+        .rpc();
 
-    const battleAccountData = await program.account.battle.fetch(
-      battleAccountAddress
-    );
+      await connection.confirmTransaction(tx, 'confirmed');
 
-    expect(battleAccountData.battleId.toString()).toBe(
-      startBattleId.toString()
-    );
-    expect(battleAccountData.playerOne.toBase58()).toBe(
-      playerOne.publicKey.toBase58()
-    );
-    expect(battleAccountData.playerTwo.toBase58()).toBe(new PublicKey(''));
-    expect(battleAccountData.battleStatus).toBe(BattleStatus.Pending);
+      const afterTokenBalance = new anchor.BN(
+        (await getAccount(connection, playerOneTokenAccount.address)).amount
+      );
+      const battleAccountData = await program.account.battle.fetch(
+        battleAccountAddress
+      );
+
+      expect(afterTokenBalance.toString()).toBe(
+        beforeTokenBalance
+          .sub(battlePrice.mul(new anchor.BN(LAMPORTS_PER_SOL)))
+          .toString()
+      );
+      expect(battleAccountData.battleId.toString()).toBe(
+        startBattleId.toString()
+      );
+      expect(battleAccountData.playerOne.toBase58()).toBe(
+        playerOne.publicKey.toBase58()
+      );
+      expect(battleAccountData.playerTwo.toBase58()).toBe(
+        new PublicKey(0).toBase58()
+      );
+      expect(battleAccountData.battleStatus).toStrictEqual({ pending: {} });
+    });
+
+    it('Joins a battle', async () => {
+      const beforeTokenBalance = new anchor.BN(
+        (await getAccount(connection, playerTwoTokenAccount.address)).amount
+      );
+
+      const tx = await program.methods
+        .joinBattle(startBattleId)
+        .accounts({
+          playerTwo: playerTwo.publicKey,
+          playerOne: playerOne.publicKey,
+          adminAccount,
+          battleAccount: battleAccountAddress,
+          playerTwoTokenAccount: playerTwoTokenAccount.address,
+          battleTokenAccount: battleTokenAccountAddress,
+          mint,
+          systemProgram: SystemProgram.programId,
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .signers([playerTwo])
+        .rpc();
+
+      await connection.confirmTransaction(tx, 'confirmed');
+
+      const afterTokenBalance = new anchor.BN(
+        (await getAccount(connection, playerTwoTokenAccount.address)).amount
+      );
+      const battleAccountData = await program.account.battle.fetch(
+        battleAccountAddress
+      );
+
+      expect(afterTokenBalance.toString()).toBe(
+        beforeTokenBalance
+          .sub(battlePrice.mul(new anchor.BN(LAMPORTS_PER_SOL)))
+          .toString()
+      );
+      expect(battleAccountData.battleId.toString()).toBe(
+        startBattleId.toString()
+      );
+      expect(battleAccountData.playerOne.toBase58()).toBe(
+        playerOne.publicKey.toBase58()
+      );
+      expect(battleAccountData.playerTwo.toBase58()).toBe(
+        playerTwo.publicKey.toBase58()
+      );
+      expect(battleAccountData.battleStatus).toStrictEqual({ inProgress: {} });
+    });
+
+    it('Records a battle', async () => {
+      const battleResult = 0;
+      const winner = playerOne;
+      const winnerTokenAccount = playerOneTokenAccount;
+
+      const beforeWinnerTokenAccount = await getAccount(
+        connection,
+        winnerTokenAccount.address
+      );
+      const beforeBattleTokenAccount = await getAccount(
+        connection,
+        battleTokenAccountAddress
+      );
+
+      const tx = await program.methods
+        .recordBattleResult(battleResult, startBattleId)
+        .accounts({
+          winner: winner.publicKey,
+          playerOne: playerOne.publicKey,
+          playerTwo: playerTwo.publicKey,
+          admin: admin.publicKey,
+          adminAccount,
+          adminTokenAccount: adminTokenAccount.address,
+          battleAccount: battleAccountAddress,
+          battleTokenAccount: battleTokenAccountAddress,
+          winnerTokenAccount: winnerTokenAccount.address,
+          mint,
+          systemProgram: SystemProgram.programId,
+          associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .signers([winner])
+        .rpc();
+
+      await connection.confirmTransaction(tx, 'confirmed');
+
+      const afterWinnerTokenAccount = await getAccount(
+        connection,
+        winnerTokenAccount.address
+      );
+      const burnAmount = burnFeeBps
+        .mul(battlePrice.mul(new anchor.BN(2 * LAMPORTS_PER_SOL)))
+        .div(new anchor.BN(10_000));
+
+      expect(afterWinnerTokenAccount.amount.toString()).toBe(
+        new anchor.BN(
+          beforeWinnerTokenAccount.amount + beforeBattleTokenAccount.amount
+        )
+          .sub(burnAmount)
+          .toString()
+      );
+    });
   });
+
+  describe('Battle with withdraw', () => {});
+
+  describe('Battle with admin withdraw', () => {});
+
+  describe('Update battle price', () => {});
+
+  describe('Update burn fee bps', () => {});
+
+  describe('Update mint', () => {});
 });

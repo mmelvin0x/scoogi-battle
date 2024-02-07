@@ -20,10 +20,9 @@ pub struct JoinQuickBattle<'info> {
 
     #[account(
         mut,
-        seeds = [constants::BATTLE_SEED, player_one.key().as_ref(), player_two.key().as_ref(), &battle_id.to_le_bytes()[..]],
+        seeds = [constants::BATTLE_SEED, player_one.key().as_ref()],
         bump,
         has_one = player_one,
-        has_one = player_two
     )]
     pub battle_account: Account<'info, Battle>,
 
@@ -37,7 +36,7 @@ pub struct JoinQuickBattle<'info> {
 
     #[account(
         mut,
-        seeds = [constants::TOKEN_ACCOUNT_SEED, player_one.key().as_ref(), &battle_id.to_le_bytes()[..]],
+        seeds = [constants::TOKEN_ACCOUNT_SEED, player_one.key().as_ref()],
         bump,
         token::mint = mint,
         token::authority = battle_token_account,
@@ -68,7 +67,7 @@ pub fn join_battle_ix(ctx: Context<JoinQuickBattle>, battle_id: u64) -> Result<(
                 from: ctx.accounts.player_two_token_account.to_account_info(),
                 mint: ctx.accounts.mint.to_account_info(),
                 to: ctx.accounts.battle_token_account.to_account_info(),
-                authority: ctx.accounts.player_one.to_account_info(),
+                authority: ctx.accounts.player_two.to_account_info(),
             };
             let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
 

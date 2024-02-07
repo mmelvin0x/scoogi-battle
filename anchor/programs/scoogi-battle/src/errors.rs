@@ -21,4 +21,8 @@ pub enum ScoogiBattleError {
     /// 0x1774 - 6004
     #[msg("Internal error")]
     InternalError,
+
+    /// 0x1775 - 6005
+    #[msg("Unauthorized")]
+    Unauthorized,
 }

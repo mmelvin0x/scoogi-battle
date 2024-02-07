@@ -16,25 +16,21 @@ pub struct WithdrawFromBattle<'info> {
     /// CHECK: passed in here for use in the seeds
     pub player_one: AccountInfo<'info>,
 
-    /// CHECK: passed in here for use in the seeds
-    pub player_two: AccountInfo<'info>,
-
     #[account(seeds = [constants::ADMIN_SEED], bump, has_one = mint)]
     pub admin_account: Account<'info, Admin>,
 
     #[account(
         mut,
         close = player_one,
-        seeds = [constants::BATTLE_SEED, player_one.key().as_ref(), player_two.key().as_ref(), &battle_id.to_le_bytes()[..]],
+        seeds = [constants::BATTLE_SEED, player_one.key().as_ref()],
         bump,
         has_one = player_one,
-        has_one = player_two
     )]
     pub battle_account: Account<'info, Battle>,
 
     #[account(
         mut,
-        seeds = [constants::TOKEN_ACCOUNT_SEED, player_one.key().as_ref(), &battle_id.to_le_bytes()[..]],
+        seeds = [constants::TOKEN_ACCOUNT_SEED, player_one.key().as_ref()],
         bump,
         token::mint = mint,
         token::authority = battle_token_account,
@@ -73,11 +69,7 @@ pub fn withdraw_from_battle_ix(ctx: Context<WithdrawFromBattle>, battle_id: u64)
 
             // transfer player one's tokens back to them
             let bump = ctx.bumps.battle_token_account;
-            let signer_seeds: &[&[&[u8]]] = &[&[
-                constants::TOKEN_ACCOUNT_SEED,
-                &battle_id.to_le_bytes(),
-                &[bump],
-            ]];
+            let signer_seeds: &[&[&[u8]]] = &[&[constants::TOKEN_ACCOUNT_SEED, &[bump]]];
 
             let cpi_program = ctx.accounts.token_program.to_account_info();
             let cpi_accounts = TransferChecked {
