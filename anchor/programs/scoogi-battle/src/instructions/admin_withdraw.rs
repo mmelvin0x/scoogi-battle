@@ -19,13 +19,13 @@ pub struct AdminWithdraw<'info> {
     /// CHECK: passed in here for use in the seeds
     pub player_two: AccountInfo<'info>,
 
-    #[account(seeds = [constants::ADMIN_SEED], bump, has_one = mint)]
+    #[account(seeds = [constants::ADMIN_SEED], bump, has_one = mint, has_one = admin)]
     pub admin_account: Account<'info, Admin>,
 
     #[account(
         mut,
         close = admin,
-        seeds = [constants::BATTLE_SEED, player_one.key().as_ref(), player_two.key().as_ref()],
+        seeds = [constants::BATTLE_SEED, player_one.key().as_ref()],
         bump,
         has_one = player_one,
         has_one = player_two
@@ -77,13 +77,22 @@ pub fn admin_withdraw_ix(ctx: Context<AdminWithdraw>, battle_id: u64) -> Result<
         return Err(ScoogiBattleError::InvalidWithdrawal.into());
     }
 
+    let player_one_key = ctx.accounts.player_one.key();
+    let amount = ctx
+        .accounts
+        .battle_token_account
+        .amount
+        .checked_div(2)
+        .unwrap();
+
     let bump = ctx.bumps.battle_token_account;
     let signer_seeds: &[&[&[u8]]] = &[&[
         constants::TOKEN_ACCOUNT_SEED,
-        &battle_id.to_le_bytes(),
+        player_one_key.as_ref(),
         &[bump],
     ]];
 
+    // transfer player one's tokens back to them
     let cpi_program = ctx.accounts.token_program.to_account_info();
     let cpi_accounts = TransferChecked {
         from: ctx.accounts.battle_token_account.to_account_info(),
@@ -93,15 +102,9 @@ pub fn admin_withdraw_ix(ctx: Context<AdminWithdraw>, battle_id: u64) -> Result<
     };
     let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
 
-    let amount = ctx
-        .accounts
-        .battle_token_account
-        .amount
-        .checked_div(2)
-        .unwrap();
-
     token::transfer_checked(cpi_ctx, amount, ctx.accounts.mint.decimals)?;
 
+    // transfer player two's tokens back to them
     let cpi_program = ctx.accounts.token_program.to_account_info();
     let cpi_accounts = TransferChecked {
         from: ctx.accounts.battle_token_account.to_account_info(),
@@ -113,6 +116,7 @@ pub fn admin_withdraw_ix(ctx: Context<AdminWithdraw>, battle_id: u64) -> Result<
 
     token::transfer_checked(cpi_ctx, amount, ctx.accounts.mint.decimals)?;
 
+    // Close the battle token account
     let cpi_program = ctx.accounts.token_program.to_account_info();
     let cpi_accounts = CloseAccount {
         account: ctx.accounts.battle_token_account.to_account_info(),

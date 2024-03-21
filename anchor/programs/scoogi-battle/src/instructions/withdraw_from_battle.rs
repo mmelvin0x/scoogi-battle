@@ -2,7 +2,7 @@ use anchor_lang::prelude::*;
 use anchor_spl::{
     associated_token::AssociatedToken,
     token_2022 as token,
-    token_interface::{Mint, TokenAccount, TokenInterface, TransferChecked},
+    token_interface::{CloseAccount, Mint, TokenAccount, TokenInterface, TransferChecked},
 };
 
 use crate::{constants, Admin, Battle, BattleStatus, ScoogiBattleError};
@@ -11,17 +11,17 @@ use crate::{constants, Admin, Battle, BattleStatus, ScoogiBattleError};
 #[instruction(battle_id: u64)]
 pub struct WithdrawFromBattle<'info> {
     #[account(mut, signer)]
-    withdrawer: Signer<'info>,
+    pub player_one: Signer<'info>,
 
     /// CHECK: passed in here for use in the seeds
-    pub player_one: AccountInfo<'info>,
+    pub admin: AccountInfo<'info>,
 
-    #[account(seeds = [constants::ADMIN_SEED], bump, has_one = mint)]
+    #[account(seeds = [constants::ADMIN_SEED], bump, has_one = mint, has_one = admin)]
     pub admin_account: Account<'info, Admin>,
 
     #[account(
         mut,
-        close = player_one,
+        close = admin,
         seeds = [constants::BATTLE_SEED, player_one.key().as_ref()],
         bump,
         has_one = player_one,
@@ -40,7 +40,7 @@ pub struct WithdrawFromBattle<'info> {
 
     #[account(
         init_if_needed,
-        payer = withdrawer,
+        payer = player_one,
         associated_token::mint = mint,
         associated_token::authority = player_one,
         associated_token::token_program = token_program
@@ -63,13 +63,14 @@ pub fn withdraw_from_battle_ix(ctx: Context<WithdrawFromBattle>, battle_id: u64)
     match ctx.accounts.battle_account.battle_status {
         // only player one has joined the battle
         BattleStatus::Pending => {
-            if ctx.accounts.withdrawer.key() != ctx.accounts.player_one.key() {
-                return Err(ScoogiBattleError::InvalidWithdrawal.into());
-            }
-
             // transfer player one's tokens back to them
+            let player_one_key = ctx.accounts.player_one.key();
             let bump = ctx.bumps.battle_token_account;
-            let signer_seeds: &[&[&[u8]]] = &[&[constants::TOKEN_ACCOUNT_SEED, &[bump]]];
+            let signer_seeds: &[&[&[u8]]] = &[&[
+                constants::TOKEN_ACCOUNT_SEED,
+                player_one_key.as_ref(),
+                &[bump],
+            ]];
 
             let cpi_program = ctx.accounts.token_program.to_account_info();
             let cpi_accounts = TransferChecked {
@@ -85,6 +86,17 @@ pub fn withdraw_from_battle_ix(ctx: Context<WithdrawFromBattle>, battle_id: u64)
                 ctx.accounts.battle_token_account.amount,
                 ctx.accounts.mint.decimals,
             )?;
+
+            // Close the battle token account
+            let cpi_program = ctx.accounts.token_program.to_account_info();
+            let cpi_accounts = CloseAccount {
+                account: ctx.accounts.battle_token_account.to_account_info(),
+                destination: ctx.accounts.admin.to_account_info(),
+                authority: ctx.accounts.battle_token_account.to_account_info(),
+            };
+            let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer_seeds);
+
+            token::close_account(cpi_ctx)?;
         }
         // both players have joined the battle, requires admin withdrawal
         _ => return Err(ScoogiBattleError::InvalidBattleStatus.into()),
